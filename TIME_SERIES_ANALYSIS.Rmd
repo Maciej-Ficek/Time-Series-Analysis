@@ -1,0 +1,268 @@
+---
+title: "ONS_MACIEJ_FICEK_RAPORT"
+author: "Maciej Ficek"
+date: "2024-02-26"
+output: pdf_document
+---
+```{r setup, message=FALSE, warning=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+# installing and loading necessary packages
+# install.packages("ggplot2")
+# install.packages("forecast")
+# install.packages("dplyr")
+# install.packages("stats")
+library("ggplot2")
+library("forecast")
+library("dplyr")
+library("stats")
+```
+
+Project for the course „Computations in the Social Sciences”
+
+I’ll try to do anything one can do with a time series. I chose classical time series „AitPassengers”, which contains values (in thousands) of passengers of the planes in USA in 1949-1960. That dataset is built-in in R language. 
+
+We will try to answer questions like:
+- does the number of flights in year x, month y, depend on the number of flights in year z, month w?
+- is it possible to describe number of flights as values of the mathematical function?
+- what can we read from built-in R plots showing data and its properties?
+
+The task is performed with R language in version 4.3.2, and in the most recent version of Rstudio (at the day of 26.02.2024).
+
+```{r, message=FALSE, warning=FALSE, fig.show='true'}
+View(AirPassengers)
+is.ts(AirPassengers)
+deltat(AirPassengers)
+time(AirPassengers)
+cycle(AirPassengers)
+frequency(AirPassengers)
+sum(is.na(AirPassengers))
+outliers <- tsoutliers(AirPassengers)
+AirPass<- AirPassengers
+AirPass[c(outliers$index)] <- outliers$replacements
+AirPass <- ts(AirPass, frequency = frequency(AirPassengers), start = start(AirPassengers))
+```
+
+# First insight and preprocessing
+
+I start with reading the data. They are built-in in R, so I don’t need to download them.
+
+Then I check basic properties of (regular) time series, such as time interval, cycle, frequency.
+
+Our data do not contain missing values, so there is no need to deal with them.
+
+However, we have some outliers, so we replace their values with values adjusted by tsoutliers() function. 
+
+Last thing we usually consider in „preprocessing” of time series is smoothing it, but our series is very short (144 observations), so we will not proceed with that procedure in our case.
+
+# Understanding the dataset
+
+```{r, message=FALSE, warning=FALSE, fig.show='true'}
+# first visualizations
+# ggplot2 needs data in data.frame type
+# not Time Series type
+frame <- data.frame(AirPass)
+Time <- time(AirPass)
+# point plot and line plot to see the behaviour
+ggplot(frame) + geom_point(mapping=aes(Time, y = AirPass))
+ggplot(frame) + geom_line(mapping=aes(Time, AirPass))
+```
+Time to visualize our time series. Most of plots will be done with ggplot2 library, which is considered the best R visualization library. For that I need a new data.frame object as an argument for ggplot() function.
+
+From our point plot, we assume that our series has a clear trend – the number of air passengers increases in time. Point plot is nice to see trend, but line plot is better to see if our series has a seasonality.
+
+From lineplot, we see yearly seasonality. It seems like the number of passengers increases durign summer months, and decreases during winter months.
+```{r, message=FALSE, warning=FALSE}
+# monthplot and seasonplot to observe seasonability
+monthplot(AirPass, main = "Month Plot")
+seasonplot(AirPass, years.labels=TRUE, col = rainbow(13), main = "Season Plot")
+```
+From monthplot we see that the number of passengers in every month increases with years. From seasonplot we can see how big these incrementations are (red is 1949, pink is 1960). We also see that the incrementation during summer months tends to be bigger than during winter months.
+
+Okay, now when we have got insight into our time series, it is time for more mathematical stuff.
+```{r, message=FALSE, warning=FALSE}
+# autocorrelation function within default range
+acf <- acf(AirPass)
+acf
+# adjusting lag to 2 years after first acf plot
+acf(AirPass, main = "Autocorrelation Function",lag = 24)
+```
+We will start with autocorrelation function, (the function which shows correlation of the time series with its lags (the same series „delayed” by some time).
+
+We see positive autocorrelation with all lags up to 24-month lag. The autocorrelation seems cyclic – it has local maximum circa 12 months, which agrees with our prediction from previous plots.
+```{r, message=FALSE, warning=FALSE, fig.show='true'}
+# plotting BoxCox transforms to check if we should
+# apply one of them
+ggplot(frame) +
+  geom_line(aes(Time, AirPass, color = "Original")) +
+  geom_line(aes(Time, BoxCox(AirPass, lambda = 0.5), color = "BoxCox (lambda = 0.5)")) +
+  geom_line(aes(Time, BoxCox(AirPass, lambda = 0), color = "BoxCox (lambda = 0)")) +
+  scale_color_manual(values = c("blue", "green", "red"),
+                     labels = c("BoxCox lambda=0", "BoxCox (lambda = 0.5)", "Original")) +
+  labs(x = "Time", y = "AirPassengers", title = "BoxCox Transformation") +
+  theme_minimal()
+BoxCox.lambda(AirPass)
+```
+Box-Cox transformation is used when the variation in data changes over time, it also reduces the impact of outliers, and gives us the distribution of data more similar to normal distribution. We already assumed that variation in our data changes, as the incrementations of number of passengers become bigger in time, and they tend to be bigger in summer months.
+
+Let’s see if we should apply that transformation in our time series. We use most popular parameters 0 (logarithmic transformation) and 0.5 (root transformation). 
+
+It seems like logarithmic transformation (lambda = 0) is proper for our data, because variation of data decreased. Most popular models work best on stationary series (series with „removed” trend and seasonability, with dominant part of randomness).
+
+Automatic procedure suggested parameter lambda=0.07, but we will stick to lambda=0, as it is not big deal, and in practical work data scientists tend to choose „roundy” parameters.
+```{r, message=FALSE, warning=FALSE, fig.show='true'}
+# additive decomposition into trend, season and random
+AirPass_decomposition_add <- decompose(AirPass, type="additive")
+AirPass_decomposition_multi <- decompose(AirPass, type="multiplicative")
+plot(AirPass_decomposition_add$random)
+plot(AirPass_decomposition_multi$random)
+Acf(AirPass_decomposition_add$random)
+Acf(AirPass_decomposition_multi$random)
+Pacf(AirPass_decomposition_add$random)
+Pacf(AirPass_decomposition_multi$random)
+```
+Every time series can be decomposed into the function of three time series. The first is long-term trend (so, monotonic time series), the second is seasonality (periodical time series), and the third one is the random fluctuation (usually white noise).
+
+The most popular types of decomposition are additives one and multiplicative one. 
+
+The results of BoxCox check, as well as observed change in variation during time, suggest us that the multiplicative decomposition would be better for our model, but let’s prove it. 
+
+We see that in our series trend is dominant, whereas seasonal and random summands have smaller absolutes values.
+From plots of residuals, we get impression that residuals for multiplicative decomposition are more random and have more stable variation (look at big difference of the borders of y-axis).
+From plots of autocorrelation and partial autocorrelation of residuals of two decompositions, we get next argument pro multiplicative decomposition – both autocorrelations in multiplicative decomposition are smaller, more of them are in confidence interval (being in that interval rejects hypothesis that they are non-zero). 
+So, multiplicative decomposition is surely better for our data.
+```{r, message=FALSE, warning=FALSE, fig.show='true'}
+# plotting trend, season and random altogether
+ggplot(frame) +
+  geom_line(aes(Time, AirPass_decomposition_add$seasonal, color = "Seasonal")) +
+  geom_line(aes(Time, AirPass_decomposition_add$trend, color = "Trend")) +
+  geom_line(aes(Time, AirPass_decomposition_add$random, color = "Random")) +
+  scale_color_manual(values = c("green", "blue", "red"),
+                     labels = c("Random", "Seasonal", "Trend")) +
+  labs(color = "Components", y = "Decomposition") +
+  theme_minimal()
+dev.off()
+# and the same for multi one
+ggplot(frame) +
+  geom_line(aes(Time, AirPass_decomposition_multi$seasonal, color = "Seasonal")) +
+  geom_line(aes(Time, AirPass_decomposition_multi$trend, color = "Trend")) +
+  geom_line(aes(Time, AirPass_decomposition_multi$random, color = "Random")) +
+  scale_color_manual(values = c("green", "blue", "red"),
+                     labels = c("Random", "Seasonal", "Trend")) +
+  labs(color = "Components", y = "Decomposition") +
+  theme_minimal()
+dev.off()
+# applying BoxCox for lambda = 0
+log_air <- BoxCox(AirPass, lambda=0)
+# additive decomposition of box-coxed series
+bc_decomposition_add <- decompose(log_air, "additive")
+# and plotting it
+ggplot(frame) +
+  geom_line(aes(Time, bc_decomposition_add$seasonal, color = "Seasonal")) +
+  geom_line(aes(Time, bc_decomposition_add$trend, color = "Trend")) +
+  geom_line(aes(Time, bc_decomposition_add$random, color = "Random")) +
+  scale_color_manual(values = c("green", "blue", "red"),
+                     labels = c("Random", "Seasonal", "Trend")) +
+  labs(color = "Components", y = "Decomposition") +
+  theme_minimal()
+```
+But we needed BC-transformation aswell. Let’s also recall that log(x * y * z) = log(x) + log(y) + log(z), which means that when we apply BoxCox transform to our multiplicative model, we later decompose boxcoxed series the additive way!
+```{r, message=FALSE, warning=FALSE, fig.show='true'}
+# subtracting lag to remove seasonality
+acf(log_air, main = "Autocorrelation Function",lag = 24)
+diff_log_air <- log_air - stats::lag(log_air, 24)
+plot(diff_log_air)
+```
+Now we see that BC transformation and subtracting 24 month lag removed both seasonabiliy and trendability. Now our new series is in stationary form and we can apply serious models.
+
+New plot suggests that seasonability has been removed, whereas trendability has been reduced but not removed.
+```{r, message=FALSE, warning=FALSE, fig.show='true'}
+# decomposition and plot of lagged Box-Coxed series
+diff_bc_decomposition_add <- decompose(diff_log_air, "additive")
+Diff_Time <- Time[0:120]
+# decomposition of series with removed lag
+ggplot(diff_log_air) +
+  geom_line(aes(Diff_Time, diff_bc_decomposition_add$seasonal, color = "Seasonal")) +
+  geom_line(aes(Diff_Time, diff_bc_decomposition_add$trend, color = "Trend")) +
+  geom_line(aes(Diff_Time, diff_bc_decomposition_add$random, color = "Random")) +
+  scale_color_manual(values = c("green", "blue", "red"),
+                     labels = c("Random", "Seasonal", "Trend")) +
+  labs(color = "Components", y = "Decomposition") +
+  theme_minimal()
+# division into training and test set
+diff_log_air_train <- window(diff_log_air, end=c(1957, 12))
+diff_log_air_test <- window(diff_log_air, start=c(1958, 01), end=c(1958,12))
+# creating three models: arima, linear trend and ets
+# arima with default parameters
+model1 <- auto.arima(diff_log_air_train)
+summary(model1)
+# linear trend + season
+model2 <- tslm(diff_log_air_train ~ trend + season)
+summary(model2)
+# exponential smoothing
+model3 <- ets(diff_log_air_train, model="ZAN")
+summary(model3)
+```
+# Modelling and forecasting
+
+Now we divide our data in training set and test set. Last two years in new series (1958-1959) will be test set, and the previous ones will be train set. We will train our models to predict values for last two years.
+
+Let’s use auto.arima function from forecast, to adjust best arma model (including arima models).
+Then we create other model, where we use linear regression for trend.
+At last, we create exponential smoothing model.
+```{r, fig.width=8, fig.height=6, message=FALSE, warning=FALSE, fig.show='true'}
+# forecasting
+# forecast 0 is naive
+# which means ARIMA(0,0,0)(0,1,0)12
+forecast0 <- snaive(diff_log_air_train, h=24)
+forecast1 <- forecast(model1, h=24)
+forecast2 <- forecast(model2, h=24)
+forecast3 <- forecast(model3, h=24)
+# plotting all forecasts
+par(mfrow=c(2,2))
+#legend("topleft", legend=c("real", "forecast"),
+#       lty= c(2,1), col = c("red", "blue"))
+# Plot 1
+plot(forecast0, main="Forecast 0 - naive")
+lines(diff_log_air_test, col="red", lty=2)
+grid()
+# Plot 2
+plot(forecast1, main="Forecast 1 - auto arima")
+lines(diff_log_air_test, col="red", lty=2)
+grid()
+# Plot 3
+plot(forecast2, main="Forecast 2 - linear regression")
+lines(diff_log_air_test, col="red", lty=2)
+grid()
+# Plot 4
+plot(forecast3, main="Forecast 3 - exp smoothing")
+lines(diff_log_air_test, col="red", lty=2)
+grid()
+
+```
+Forecast0 is „naive” forecast made by model ARIMA(0,0,0)(0,1,0)12
+Forecasts1-3 are by our three models.
+Plot suggest that model1 (autoarima) was the best, but lets check it numerically.
+Lets compare 4 most common errors to check which model was the best.
+
+# Comparing the models
+```{r, message=FALSE, warning=FALSE, fig.show='true'}
+# comparing the models
+criterions <- c("RMSE", "MAE", "MASE", "MAPE")
+acc0 <- accuracy(forecast0, diff_log_air_test)[, criterions]
+acc1 <- accuracy(forecast1, diff_log_air_test)[, criterions]
+acc2 <- accuracy(forecast2, diff_log_air_test)[, criterions]
+acc3 <- accuracy(forecast3, diff_log_air_test)[, criterions]
+acc0
+acc1
+acc2
+acc3
+
+AIC(model1, model2, model3)
+BIC(model1, model2, model3)
+```
+It seems like non-naive arima model was the best on both training set and test set, which is rational – exponential smoothing does not work well on short time series, because it applies high weights to late observations and low to firsts. Therefore, its forecast is too constant. Linear regression model is probably too simple to recreate the trend properly. Its quality can be adjusted by allowing the trend to be polynomial of higher degree than 1.
+
+At last, let’s see that Akaike Information Criterion and Bayesian Information Criterion, also choose arima as the best of our models.
+
+Thank You for reading my report.
+
